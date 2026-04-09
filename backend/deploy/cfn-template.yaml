@@ -1,0 +1,451 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Gujarat DISCOM AI Capacity Planning POC
+
+Parameters:
+  S3Bucket:
+    Type: String
+    Default: guj-discom-poc-datalake
+  LambdaPrefix:
+    Type: String
+    Default: deploy/lambdas
+
+Resources:
+  # IAM Role for Lambda functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: guj-discom-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchGetItem
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/guj-discom-*'
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+        - PolicyName: LambdaInvokeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:guj-discom-*'
+
+  # DT Load Forecast Lambda
+  DtForecastFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: guj-discom-dt-forecast
+      Runtime: python3.12
+      Handler: handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Sub '${LambdaPrefix}/dt_forecast.zip'
+      Environment:
+        Variables:
+          DT_TABLE: guj-discom-dt-meter
+
+  # EV Forecast Lambda
+  EvForecastFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: guj-discom-ev-forecast
+      Runtime: python3.12
+      Handler: handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Sub '${LambdaPrefix}/ev_forecast.zip'
+      Environment:
+        Variables:
+          EV_TABLE: guj-discom-ev-charging
+
+  # Solar Forecast Lambda
+  SolarForecastFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: guj-discom-solar-forecast
+      Runtime: python3.12
+      Handler: handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Sub '${LambdaPrefix}/solar_forecast.zip'
+      Environment:
+        Variables:
+          SOLAR_TABLE: guj-discom-solar-der
+
+  # Capacity Planning Lambda
+  CapacityPlanFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: guj-discom-capacity-plan
+      Runtime: python3.12
+      Handler: handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Sub '${LambdaPrefix}/capacity_planning.zip'
+      Environment:
+        Variables:
+          DT_TABLE: guj-discom-dt-meter
+          EV_TABLE: guj-discom-ev-charging
+          SOLAR_TABLE: guj-discom-solar-der
+          STORAGE_TABLE: guj-discom-energy-storage
+
+  # Chat Orchestrator Lambda
+  ChatOrchestratorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: guj-discom-chat-orchestrator
+      Runtime: python3.12
+      Handler: handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 90
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Sub '${LambdaPrefix}/chat_orchestrator.zip'
+      Environment:
+        Variables:
+          DT_TABLE: guj-discom-dt-meter
+          EV_TABLE: guj-discom-ev-charging
+          SOLAR_TABLE: guj-discom-solar-der
+          STORAGE_TABLE: guj-discom-energy-storage
+          DT_FORECAST_FUNCTION: guj-discom-dt-forecast
+          EV_FORECAST_FUNCTION: guj-discom-ev-forecast
+          SOLAR_FORECAST_FUNCTION: guj-discom-solar-forecast
+          CAPACITY_PLAN_FUNCTION: guj-discom-capacity-plan
+          BEDROCK_MODEL_ID: anthropic.claude-sonnet-4-20250514-v1:0
+
+  # API Gateway
+  DiscomApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: guj-discom-poc-api
+      Description: Gujarat DISCOM Capacity Planning API
+
+  # API Resources
+  DtForecastResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ParentId: !GetAtt DiscomApi.RootResourceId
+      PathPart: dt-forecast
+
+  EvForecastResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ParentId: !GetAtt DiscomApi.RootResourceId
+      PathPart: ev-forecast
+
+  SolarForecastResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ParentId: !GetAtt DiscomApi.RootResourceId
+      PathPart: solar-forecast
+
+  CapacityPlanResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ParentId: !GetAtt DiscomApi.RootResourceId
+      PathPart: capacity-plan
+
+  ChatResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ParentId: !GetAtt DiscomApi.RootResourceId
+      PathPart: chat
+
+  # POST Methods
+  DtForecastMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ResourceId: !Ref DtForecastResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DtForecastFunction.Arn}/invocations'
+
+  EvForecastMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ResourceId: !Ref EvForecastResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${EvForecastFunction.Arn}/invocations'
+
+  SolarForecastMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ResourceId: !Ref SolarForecastResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SolarForecastFunction.Arn}/invocations'
+
+  CapacityPlanMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ResourceId: !Ref CapacityPlanResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CapacityPlanFunction.Arn}/invocations'
+
+  ChatMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ResourceId: !Ref ChatResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ChatOrchestratorFunction.Arn}/invocations'
+
+  # OPTIONS methods for CORS
+  DtForecastOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ResourceId: !Ref DtForecastResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  EvForecastOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ResourceId: !Ref EvForecastResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  SolarForecastOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ResourceId: !Ref SolarForecastResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  CapacityPlanOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ResourceId: !Ref CapacityPlanResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ChatOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref DiscomApi
+      ResourceId: !Ref ChatResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - DtForecastMethod
+      - EvForecastMethod
+      - SolarForecastMethod
+      - CapacityPlanMethod
+      - ChatMethod
+      - DtForecastOptions
+      - EvForecastOptions
+      - SolarForecastOptions
+      - CapacityPlanOptions
+      - ChatOptions
+    Properties:
+      RestApiId: !Ref DiscomApi
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref DiscomApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod
+
+  # Lambda Permissions for API Gateway
+  DtForecastPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DtForecastFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DiscomApi}/*'
+
+  EvForecastPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EvForecastFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DiscomApi}/*'
+
+  SolarForecastPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SolarForecastFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DiscomApi}/*'
+
+  CapacityPlanPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CapacityPlanFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DiscomApi}/*'
+
+  ChatPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ChatOrchestratorFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DiscomApi}/*'
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway Base URL
+    Value: !Sub 'https://${DiscomApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+  ApiId:
+    Description: API Gateway ID
+    Value: !Ref DiscomApi
