@@ -1,4 +1,4 @@
-# ⚡ Gujarat DISCOM — AI-Driven Capacity Planning Platform
+# ⚡ AI-Driven Capacity Planning Platform
 
 A complete end-to-end AI-powered capacity planning solution for power distribution companies (DISCOMs), built on AWS. The platform analyzes Distribution Transformer (DT) meter data, EV charging patterns, solar/DER generation, and battery energy storage to provide demand forecasting, growth projections, and scenario-based capacity planning.
 
