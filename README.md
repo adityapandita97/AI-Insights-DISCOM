@@ -44,7 +44,10 @@ This platform provides data-driven insights to transform capacity planning from 
 
 ---
 
-## 🏗️ Architecture
+## 🏗️  AWS Architecture
+
+<img width="1742" height="835" alt="image" src="https://github.com/user-attachments/assets/bee00059-fb50-4a1d-9fd1-c3677ad253d3" />
+
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -83,9 +86,6 @@ This platform provides data-driven insights to transform capacity planning from 
 │  guj-discom-poc-datalake/raw/energy-storage/                        │
 └─────────────────────────────────────────────────────────────────────┘
 ```
-
-<img width="1742" height="835" alt="image" src="https://github.com/user-attachments/assets/bee00059-fb50-4a1d-9fd1-c3677ad253d3" />
-
 
 ### AWS Services Used
 
