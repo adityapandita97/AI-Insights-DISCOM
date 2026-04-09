@@ -84,6 +84,9 @@ This platform provides data-driven insights to transform capacity planning from 
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+<img width="1742" height="835" alt="image" src="https://github.com/user-attachments/assets/bee00059-fb50-4a1d-9fd1-c3677ad253d3" />
+
+
 ### AWS Services Used
 
 | Service | Purpose |
