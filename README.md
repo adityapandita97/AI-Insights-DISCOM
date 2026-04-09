@@ -220,7 +220,7 @@ Ahmedabad, Surat, Vadodara, Rajkot, Gandhinagar, Bhavnagar, Jamnagar, Junagadh, 
 ## 📁 Project Structure
 
 ```
-guj-discom-poc/
+discom/
 ├── README.md                              # This file
 ├── data/
 │   ├── generate_data_large.py             # Synthetic data generator (large scale)
