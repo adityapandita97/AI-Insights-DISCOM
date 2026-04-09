@@ -1,0 +1,159 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Gujarat DISCOM Capacity Planning POC - Backend
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        DT_TABLE: guj-discom-dt-meter
+        EV_TABLE: guj-discom-ev-charging
+        SOLAR_TABLE: guj-discom-solar-der
+        STORAGE_TABLE: guj-discom-energy-storage
+
+Resources:
+  # API Gateway
+  DiscomApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowOrigin: "'*'"
+
+  # DT Load Forecasting Lambda
+  DtForecastFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: guj-discom-dt-forecast
+      Handler: handler.handler
+      CodeUri: lambda/dt_forecast/
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: guj-discom-dt-meter
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DiscomApi
+            Path: /dt-forecast
+            Method: post
+
+  # EV Demand Growth Lambda
+  EvForecastFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: guj-discom-ev-forecast
+      Handler: handler.handler
+      CodeUri: lambda/ev_forecast/
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: guj-discom-ev-charging
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DiscomApi
+            Path: /ev-forecast
+            Method: post
+
+  # Solar/DER Forecasting Lambda
+  SolarForecastFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: guj-discom-solar-forecast
+      Handler: handler.handler
+      CodeUri: lambda/solar_forecast/
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: guj-discom-solar-der
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DiscomApi
+            Path: /solar-forecast
+            Method: post
+
+  # Combined Capacity Planning Lambda
+  CapacityPlanFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: guj-discom-capacity-plan
+      Handler: handler.handler
+      CodeUri: lambda/capacity_planning/
+      Timeout: 60
+      MemorySize: 512
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: guj-discom-dt-meter
+        - DynamoDBReadPolicy:
+            TableName: guj-discom-ev-charging
+        - DynamoDBReadPolicy:
+            TableName: guj-discom-solar-der
+        - DynamoDBReadPolicy:
+            TableName: guj-discom-energy-storage
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DiscomApi
+            Path: /capacity-plan
+            Method: post
+
+  # Bedrock Chat Orchestrator Lambda
+  ChatOrchestratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: guj-discom-chat-orchestrator
+      Handler: handler.handler
+      CodeUri: lambda/chat_orchestrator/
+      Timeout: 60
+      MemorySize: 512
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: guj-discom-dt-meter
+        - DynamoDBReadPolicy:
+            TableName: guj-discom-ev-charging
+        - DynamoDBReadPolicy:
+            TableName: guj-discom-solar-der
+        - DynamoDBReadPolicy:
+            TableName: guj-discom-energy-storage
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource:
+                - !GetAtt DtForecastFunction.Arn
+                - !GetAtt EvForecastFunction.Arn
+                - !GetAtt SolarForecastFunction.Arn
+                - !GetAtt CapacityPlanFunction.Arn
+      Environment:
+        Variables:
+          DT_FORECAST_FUNCTION: !Ref DtForecastFunction
+          EV_FORECAST_FUNCTION: !Ref EvForecastFunction
+          SOLAR_FORECAST_FUNCTION: !Ref SolarForecastFunction
+          CAPACITY_PLAN_FUNCTION: !Ref CapacityPlanFunction
+          BEDROCK_MODEL_ID: anthropic.claude-sonnet-4-20250514-v1:0
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DiscomApi
+            Path: /chat
+            Method: post
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway URL
+    Value: !Sub "https://${DiscomApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
