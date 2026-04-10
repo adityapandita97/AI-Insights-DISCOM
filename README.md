@@ -44,7 +44,7 @@ This platform provides data-driven insights to transform capacity planning from 
 
 ## 🏗️  AWS Architecture
 
-<img width="1557" height="703" alt="image" src="https://github.com/user-attachments/assets/95ac6199-3317-4eb9-bc30-07da885ea800" />
+<img width="1364" height="649" alt="image" src="https://github.com/user-attachments/assets/a6ef8a13-e65e-4e5a-80a7-84dfcac66e09" />
 
 
 ```
