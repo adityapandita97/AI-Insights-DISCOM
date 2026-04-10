@@ -643,6 +643,115 @@ Increase the Lambda timeout in the CloudFormation template or via CLI:
 aws lambda update-function-configuration --function-name FUNCTION_NAME --timeout 120 --region ap-south-1
 ```
 
+## 📈 Scaling to Production (PAN India)
+
+This section addresses how the architecture scales from a POC to a production system serving multiple DISCOMs across India.
+
+### Lambda Concurrency
+
+| Scenario | Concurrent Users | Lambda Concurrency Needed | Approach |
+|----------|-----------------|--------------------------|----------|
+| POC (1 DISCOM) | 10-50 | Default (1,000) is sufficient | No changes needed |
+| State-level (5 DISCOMs) | 200-500 | ~500 concurrent | Use reserved concurrency per function |
+| PAN India (50 DISCOMs) | 2,000-5,000 | 5,000+ | Request service quota increase + provisioned concurrency |
+
+- Forecast Lambdas (DT, EV, Solar, Capacity) are short-lived (sub-second DynamoDB reads) — they release concurrency quickly
+- Chat Orchestrator takes 5-15 seconds (Bedrock round-trip) — use **reserved concurrency** to guarantee slots for chat vs forecast
+- Use **provisioned concurrency** to eliminate cold starts for latency-sensitive endpoints
+- Default account limit is 1,000 concurrent executions — raise to tens of thousands via [AWS Service Quotas](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html)
+
+### Bedrock (AI Model) Throughput
+
+The AI chat assistant uses Amazon Bedrock which has tokens-per-minute (TPM) limits, not per-request limits.
+
+| Scale | Approach |
+|-------|----------|
+| POC | On-demand throughput (default TPM limits) |
+| Production | **Provisioned Throughput** — dedicated model units guaranteeing capacity |
+| Burst traffic | Add **SQS queue** in front of chat Lambda to smooth out spikes |
+
+- Bedrock Provisioned Throughput gives you dedicated model capacity that won't be affected by other customers
+- For cost optimization, use **prompt caching** (reduces input token costs by up to 90% for repeated system prompts)
+- Not every page load needs to call Bedrock — pre-compute forecasts on a schedule and serve cached results
+
+### DynamoDB at Scale
+
+| Scale | Items | Approach |
+|-------|-------|----------|
+| POC | ~411K items | PAY_PER_REQUEST, full table scans |
+| State-level | ~10M items | Add **Global Secondary Indexes (GSIs)** on city, area_type |
+| PAN India | ~100M+ items | GSIs + **DynamoDB Accelerator (DAX)** for caching + partition key design |
+
+- PAY_PER_REQUEST auto-scales to any traffic level with zero capacity planning
+- For production, add GSIs to avoid full table scans:
+  ```
+  GSI: city-timestamp-index (PK: city, SK: timestamp)
+  GSI: area_type-timestamp-index (PK: area_type, SK: timestamp)
+  ```
+- DynamoDB handles millions of reads/second natively
+- Use **DAX** (in-memory cache) for sub-millisecond reads on hot data
+
+### Dynamic Data Updates (Real-Time Visualization)
+
+The POC uses static batch-loaded data. For production, the architecture evolves to support real-time updates:
+
+```
+Real-Time Data Flow:
+SCADA/Meters → AWS IoT Core → Amazon Kinesis Data Streams → AWS Lambda (processor) → DynamoDB
+
+Scheduled Forecasts:
+Amazon EventBridge (hourly/daily) → AWS Step Functions → SageMaker/Lambda → DynamoDB (cached forecasts)
+
+Dashboard Updates:
+Option A: Frontend polls API every 30-60 seconds (simple, works for most cases)
+Option B: API Gateway WebSocket → Lambda → push updates to connected clients (true real-time)
+```
+
+| Component | POC (Current) | Production |
+|-----------|--------------|------------|
+| Data ingestion | Batch CSV upload | IoT Core + Kinesis real-time streaming |
+| Forecast computation | On-demand per query | Pre-computed on schedule (EventBridge + Lambda) |
+| Dashboard refresh | Manual (click "Run Forecast") | Auto-refresh every 30-60s or WebSocket push |
+| Model inference | Bedrock on every chat query | Cached forecasts + Bedrock only for new questions |
+
+### Production Evolution Path
+
+```
+POC (current)
+  │
+  ├── Phase 1: Add real-time ingestion
+  │   └── IoT Core + Kinesis → Lambda → DynamoDB
+  │
+  ├── Phase 2: Optimize queries
+  │   └── Add DynamoDB GSIs on city/area_type
+  │   └── Add DAX caching layer
+  │
+  ├── Phase 3: Scheduled forecasting
+  │   └── EventBridge triggers hourly/daily forecast jobs
+  │   └── Pre-computed results cached in DynamoDB
+  │   └── Dashboard serves cached data (no Bedrock per page load)
+  │
+  ├── Phase 4: Scale AI layer
+  │   └── Bedrock Provisioned Throughput
+  │   └── SQS queue for chat traffic smoothing
+  │   └── Prompt caching for cost reduction
+  │
+  ├── Phase 5: Multi-DISCOM / PAN India
+  │   └── Lambda concurrency increase (10,000+)
+  │   └── DynamoDB partition key design for multi-tenant
+  │   └── CloudFront multi-region for low latency
+  │   └── Cognito for DISCOM-specific auth and data isolation
+  │
+  └── Phase 6: Advanced analytics
+      └── SageMaker for custom ML models (DeepAR, Prophet)
+      └── Amazon Forecast for automated time-series
+      └── QuickSight for executive BI dashboards
+```
+
+### Key Scaling Principle
+
+The entire architecture is **serverless** — no servers to manage, no capacity to pre-provision, pay only for what you use. Each layer (Lambda, DynamoDB, API Gateway, Bedrock, CloudFront) scales independently. This means you can go from 10 users to 10,000 users without re-architecting — just adjust service quotas and add caching layers.
+
 ---
 
 ## 📚 Additional Resources
